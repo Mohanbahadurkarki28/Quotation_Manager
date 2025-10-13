@@ -11,24 +11,14 @@ class QuotationItemInline(admin.TabularInline):
     can_delete = True
     readonly_fields = ('total_price',)
 
-    # Show per-item total price (correct discount logic)
     def total_price(self, obj):
         if obj and obj.qty and obj.rate:
-            # Apply percentage discount
             discounted_rate = float(obj.rate) * (1 - float(obj.discount) / 100)
-
-            # Subtotal after discount
             subtotal = obj.qty * discounted_rate
-
-            # VAT on discounted subtotal
             vat_amount = subtotal * (float(obj.vat) / 100)
-
-            # Total including VAT
             total = subtotal + vat_amount
-
             return "{:.2f}".format(total)
         return "-"
-
     total_price.short_description = "Item Total"
 
 
@@ -39,31 +29,55 @@ class QuotationAdmin(admin.ModelAdmin):
         'status',
         'subtotal_display',
         'discount_display',
+        'subtotal_discount',   
         'vat_display',
         'grand_total_display',
         'created_at',
         'updated_at',
     )
     inlines = [QuotationItemInline]
+
+    # Not read-only so user can input it
     readonly_fields = (
         'created_at',
         'updated_at',
         'subtotal_display',
         'discount_display',
         'vat_display',
-        'grand_total_display'
+        'grand_total_display',
+    )
+
+    # Define field order (so subtotal_discount appears nicely)
+    fieldsets = (
+        (None, {
+            'fields': (
+                'status',
+                'subtotal_discount', 
+            )
+        }),
+        ('Calculated Summary', {
+            'fields': (
+                'subtotal_display',
+                'discount_display',
+                'vat_display',
+                'grand_total_display',
+            ),
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+        }),
     )
 
     # --- Calculated display fields ---
     def subtotal_display(self, obj):
         value = float(obj.total_before_discount())
         return "{:.2f}".format(value)
-    subtotal_display.short_description = "Subtotal"
+    subtotal_display.short_description = "Subtotal (Before Discounts)"
 
     def discount_display(self, obj):
         value = float(obj.total_discount())
         return "{:.2f}".format(value)
-    discount_display.short_description = "Item Discounts"
+    discount_display.short_description = "Per-Item Discounts"
 
     def vat_display(self, obj):
         value = float(obj.total_vat())
