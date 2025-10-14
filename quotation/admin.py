@@ -37,7 +37,6 @@ class QuotationAdmin(admin.ModelAdmin):
     )
     inlines = [QuotationItemInline]
 
-    # Not read-only so user can input it
     readonly_fields = (
         'created_at',
         'updated_at',
@@ -47,12 +46,13 @@ class QuotationAdmin(admin.ModelAdmin):
         'grand_total_display',
     )
 
-    # Define field order (so subtotal_discount appears nicely)
     fieldsets = (
         (None, {
             'fields': (
                 'status',
-                'subtotal_discount', 
+                'subtotal_discount',
+                'terms_and_conditions',   
+                'additional_notes',      
             )
         }),
         ('Calculated Summary', {
@@ -77,7 +77,7 @@ class QuotationAdmin(admin.ModelAdmin):
     def discount_display(self, obj):
         value = float(obj.total_discount())
         return "{:.2f}".format(value)
-    discount_display.short_description = "Per-Item Discounts"
+    discount_display.short_description = "Total Discounts"
 
     def vat_display(self, obj):
         value = float(obj.total_vat())

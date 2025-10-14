@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 from django.db.models import Sum, F, FloatField, ExpressionWrapper
 
+
 class Quotation(models.Model):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
@@ -15,6 +16,10 @@ class Quotation(models.Model):
     subtotal_discount = models.FloatField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    #  Two texts fields
+    terms_and_conditions = models.TextField(blank=True, null=True)
+    additional_notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
         return f"Quotation #{self.id} ({self.status})"
