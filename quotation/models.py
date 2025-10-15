@@ -17,21 +17,24 @@ class Quotation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    #  Two texts fields
+    # Optional text fields
     terms_and_conditions = models.TextField(blank=True, null=True)
     additional_notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
         return f"Quotation #{self.id} ({self.status})"
 
-    # --- Corrected calculations ---
+    # -------------------------------
+    #  Totals and Calculations
+    # -------------------------------
     def total_before_discount(self):
+        """Sum of all item subtotals before discount."""
         return self.items.aggregate(
             total=Sum(F('qty') * F('rate'), output_field=FloatField())
         )['total'] or 0
 
     def total_discount(self):
-        """Sum of per-item percentage discounts"""
+        """Sum of per-item discounts (percentage-based)."""
         return self.items.aggregate(
             total=Sum(
                 ExpressionWrapper(F('qty') * F('rate') * F('discount') / 100, output_field=FloatField())
@@ -39,7 +42,7 @@ class Quotation(models.Model):
         )['total'] or 0
 
     def total_vat(self):
-        """VAT should apply *after discount*"""
+        """VAT is applied after discount."""
         return self.items.aggregate(
             total=Sum(
                 ExpressionWrapper(
@@ -50,11 +53,12 @@ class Quotation(models.Model):
         )['total'] or 0
 
     def grand_total(self):
+        """Final quotation amount after discounts and VAT."""
         subtotal = self.total_before_discount()
         discount = self.total_discount()
         subtotal_after_discount = subtotal - discount - self.subtotal_discount
         vat = self.total_vat()
-        return subtotal_after_discount + vat
+        return round(subtotal_after_discount + vat, 2)
 
     def save(self, *args, **kwargs):
         if self.status == 'closed' and self.pk:
@@ -81,12 +85,27 @@ class QuotationItem(models.Model):
     discount = models.FloatField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
     vat = models.FloatField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
     version = models.IntegerField(default=1)
-    
+
     UNIT_CHOICES = [
         ('pcs', 'Piece'),
         ('m', 'Meter'),
     ]
     unit = models.CharField(max_length=10, choices=UNIT_CHOICES, blank=True)
+
+    # -------------------------------
+    #  Per item total calculation
+    # -------------------------------
+    @property
+    def total_price(self):
+        """
+        Calculates the final price for this item:
+        (qty * rate) - discount + VAT
+        """
+        subtotal = Decimal(self.qty) * self.rate
+        discount_amount = subtotal * Decimal(self.discount) / 100
+        subtotal_after_discount = subtotal - discount_amount
+        vat_amount = subtotal_after_discount * Decimal(self.vat) / 100
+        return round(subtotal_after_discount + vat_amount, 2)
 
     def save(self, *args, **kwargs):
         if self.name:
