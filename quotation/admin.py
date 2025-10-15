@@ -13,7 +13,6 @@ class QuotationItemInline(admin.TabularInline):
     max_num = 100
     can_delete = True
 
-    # Show computed field
     readonly_fields = ('item_total',)
     fields = ('name', 'qty', 'rate', 'discount', 'vat', 'version', 'unit', 'item_total')
 
@@ -76,23 +75,24 @@ class QuotationAdmin(admin.ModelAdmin):
     # ----------------------------------------
     # Display helper methods for Quotation totals
     # ----------------------------------------
+    @admin.display(description="Subtotal (Before Discounts)")
     def subtotal_display(self, obj):
         value = float(obj.total_before_discount())
         return f"{value:.2f}"
-    subtotal_display.short_description = "Subtotal (Before Discounts)"
 
+    @admin.display(description="Total Discounts")
     def discount_display(self, obj):
         value = float(obj.total_discount())
         return f"{value:.2f}"
-    discount_display.short_description = "Total Discounts"
 
+    @admin.display(description="Total VAT")
     def vat_display(self, obj):
         value = float(obj.total_vat())
         return f"{value:.2f}"
-    vat_display.short_description = "Total VAT"
 
+    @admin.display(description="Grand Total")
     def grand_total_display(self, obj):
         value = float(obj.grand_total())
         color = "#008000" if value > 0 else "#999999"
-        return format_html('<b style="color:{};">{:.2f}</b>', color, value)
-    grand_total_display.short_description = "Grand Total"
+        formatted_value = f"{value:.2f}"  # pre-format float
+        return format_html('<b style="color:{};">{}</b>', color, formatted_value)
