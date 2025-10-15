@@ -4,9 +4,9 @@ from .models import Quotation, QuotationItem
 import re
 
 
-# -----------------------------
+# ====================================================
 # Quotation Item Serializer
-# -----------------------------
+# ====================================================
 class QuotationItemSerializer(serializers.ModelSerializer):
     rate = serializers.DecimalField(max_digits=12, decimal_places=2)
     total_price = serializers.SerializerMethodField(read_only=True)
@@ -19,7 +19,9 @@ class QuotationItemSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'quotation', 'total_price']
 
-    # --- Validation ---
+    # ------------------------------
+    # Validation
+    # ------------------------------
     def validate_name(self, value):
         """Only allow alphanumeric + limited punctuation."""
         if not re.match(r'^[A-Za-z0-9\s\-,.()]+$', value):
@@ -28,7 +30,9 @@ class QuotationItemSerializer(serializers.ModelSerializer):
             )
         return value.strip()
 
-    # --- Computed total ---
+    # ------------------------------
+    # Computed total
+    # ------------------------------
     def get_total_price(self, obj):
         """Return total = (rate - discount%) * qty + VAT."""
         rate = Decimal(obj.rate)
@@ -45,9 +49,9 @@ class QuotationItemSerializer(serializers.ModelSerializer):
         return total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
-# -----------------------------
+# ====================================================
 # Quotation Serializer
-# -----------------------------
+# ====================================================
 class QuotationSerializer(serializers.ModelSerializer):
     items = QuotationItemSerializer(many=True)
 
@@ -60,12 +64,28 @@ class QuotationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Quotation
         fields = [
-            'id', 'status', 'subtotal_discount', 'items',
-            'created_at', 'updated_at',
-            'total_before_discount', 'total_discount', 'total_vat', 'grand_total',
+            'id',
+            'status',
+            'subtotal_discount',
+            'terms_and_conditions',  
+            'additional_notes',      
+            'items',
+            'created_at',
+            'updated_at',
+            'total_before_discount',
+            'total_discount',
+            'total_vat',
+            'grand_total',
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at',
+            'total_before_discount', 'total_discount',
+            'total_vat', 'grand_total',
         ]
 
-    # --- Computed total fields ---
+    # ------------------------------
+    # Computed total fields
+    # ------------------------------
     def get_total_before_discount(self, obj):
         return obj.total_before_discount()
 
@@ -78,24 +98,30 @@ class QuotationSerializer(serializers.ModelSerializer):
     def get_grand_total(self, obj):
         return obj.grand_total()
 
-    # --- Create ---
+    # ------------------------------
+    # Create
+    # ------------------------------
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
         quotation = Quotation.objects.create(**validated_data)
+
         for item_data in items_data:
             QuotationItem.objects.create(quotation=quotation, **item_data)
+
         return quotation
 
-    # --- Update (safe for partial updates) ---
+    # ------------------------------
+    # Update (safe for partial updates)
+    # ------------------------------
     def update(self, instance, validated_data):
         items_data = validated_data.pop('items', None)
 
-        # Update quotation fields
+        # Update main quotation fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # Handle nested items
+        # Handle nested items if provided
         if items_data is not None:
             existing_items = {item.id: item for item in instance.items.all()}
 
@@ -111,7 +137,7 @@ class QuotationSerializer(serializers.ModelSerializer):
                     # Create new item
                     QuotationItem.objects.create(quotation=instance, **item_data)
 
-            # Delete items not present in the update
+            # Delete items not included in the update
             current_ids = [i.get('id') for i in items_data if i.get('id')]
             for old_item in instance.items.exclude(id__in=current_ids):
                 old_item.delete()
