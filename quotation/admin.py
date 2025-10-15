@@ -94,5 +94,5 @@ class QuotationAdmin(admin.ModelAdmin):
     def grand_total_display(self, obj):
         value = float(obj.grand_total())
         color = "#008000" if value > 0 else "#999999"
-        formatted_value = f"{value:.2f}"  # pre-format float
+        formatted_value = f"{value:.2f}" 
         return format_html('<b style="color:{};">{}</b>', color, formatted_value)
