@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import Quotation, QuotationItem
+from .models import Quotation, QuotationItem, QuotationInfo
 
 
 # --------------------------------------------
@@ -23,6 +23,17 @@ class QuotationItemInline(admin.TabularInline):
 
 
 # --------------------------------------------
+# Inline for Quotation Info
+# --------------------------------------------
+class QuotationInfoInline(admin.StackedInline):
+    model = QuotationInfo
+    extra = 0
+    max_num = 1
+    can_delete = False
+    fields = ('quotation_to', 'address', 'phone')
+
+
+# --------------------------------------------
 # Main Quotation Admin
 # --------------------------------------------
 @admin.register(Quotation)
@@ -39,7 +50,7 @@ class QuotationAdmin(admin.ModelAdmin):
         'updated_at',
     )
 
-    inlines = [QuotationItemInline]
+    inlines = [QuotationInfoInline, QuotationItemInline]  
 
     readonly_fields = (
         'created_at',

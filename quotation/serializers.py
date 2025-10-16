@@ -1,7 +1,16 @@
 from rest_framework import serializers
 from decimal import Decimal, ROUND_HALF_UP
-from .models import Quotation, QuotationItem
+from .models import Quotation, QuotationItem, QuotationInfo
 import re
+
+
+# ====================================================
+# Quotation Info Serializer
+# ====================================================
+class QuotationInfoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuotationInfo
+        fields = ['quotation_to', 'address', 'phone']
 
 
 # ====================================================
@@ -19,22 +28,14 @@ class QuotationItemSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'quotation', 'total_price']
 
-    # ------------------------------
-    # Validation
-    # ------------------------------
     def validate_name(self, value):
-        """Only allow alphanumeric + limited punctuation."""
         if not re.match(r'^[A-Za-z0-9\s\-,.()]+$', value):
             raise serializers.ValidationError(
                 "Name can only contain letters, numbers, spaces, hyphens, commas, periods, and parentheses."
             )
         return value.strip()
 
-    # ------------------------------
-    # Computed total
-    # ------------------------------
     def get_total_price(self, obj):
-        """Return total = (rate - discount%) * qty + VAT."""
         rate = Decimal(obj.rate)
         qty = Decimal(obj.qty)
         discount = Decimal(obj.discount or 0)
@@ -44,8 +45,6 @@ class QuotationItemSerializer(serializers.ModelSerializer):
         subtotal = qty * discounted_rate
         vat_amount = subtotal * (vat / Decimal('100'))
         total = subtotal + vat_amount
-
-        # Round to 2 decimal places
         return total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
@@ -54,8 +53,8 @@ class QuotationItemSerializer(serializers.ModelSerializer):
 # ====================================================
 class QuotationSerializer(serializers.ModelSerializer):
     items = QuotationItemSerializer(many=True)
+    info = QuotationInfoSerializer(required=False)  # <--- Nested info
 
-    # Computed read-only totals
     total_before_discount = serializers.SerializerMethodField()
     total_discount = serializers.SerializerMethodField()
     total_vat = serializers.SerializerMethodField()
@@ -67,9 +66,10 @@ class QuotationSerializer(serializers.ModelSerializer):
             'id',
             'status',
             'subtotal_discount',
-            'terms_and_conditions',  
-            'additional_notes',      
+            'terms_and_conditions',
+            'additional_notes',
             'items',
+            'info',  
             'created_at',
             'updated_at',
             'total_before_discount',
@@ -83,9 +83,6 @@ class QuotationSerializer(serializers.ModelSerializer):
             'total_vat', 'grand_total',
         ]
 
-    # ------------------------------
-    # Computed total fields
-    # ------------------------------
     def get_total_before_discount(self, obj):
         return obj.total_before_discount()
 
@@ -98,48 +95,55 @@ class QuotationSerializer(serializers.ModelSerializer):
     def get_grand_total(self, obj):
         return obj.grand_total()
 
-    # ------------------------------
-    # Create
-    # ------------------------------
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
+        info_data = validated_data.pop('info', None)
+
         quotation = Quotation.objects.create(**validated_data)
 
+        # Create nested items
         for item_data in items_data:
             QuotationItem.objects.create(quotation=quotation, **item_data)
 
+        # Create nested info
+        if info_data:
+            QuotationInfo.objects.create(quotation=quotation, **info_data)
+
         return quotation
 
-    # ------------------------------
-    # Update (safe for partial updates)
-    # ------------------------------
     def update(self, instance, validated_data):
         items_data = validated_data.pop('items', None)
+        info_data = validated_data.pop('info', None)
 
         # Update main quotation fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
 
-        # Handle nested items if provided
+        # Update or create nested items
         if items_data is not None:
             existing_items = {item.id: item for item in instance.items.all()}
-
             for item_data in items_data:
                 item_id = item_data.get('id')
                 if item_id and item_id in existing_items:
-                    # Update existing item
                     item_instance = existing_items[item_id]
                     for attr, value in item_data.items():
                         setattr(item_instance, attr, value)
                     item_instance.save()
                 else:
-                    # Create new item
                     QuotationItem.objects.create(quotation=instance, **item_data)
-
-            # Delete items not included in the update
             current_ids = [i.get('id') for i in items_data if i.get('id')]
             for old_item in instance.items.exclude(id__in=current_ids):
                 old_item.delete()
+
+        # Update or create nested info
+        if info_data:
+            if hasattr(instance, 'info'):
+                for attr, value in info_data.items():
+                    setattr(instance.info, attr, value)
+                instance.info.save()
+            else:
+                # Create new info
+                QuotationInfo.objects.create(quotation=instance, **info_data)
 
         return instance
