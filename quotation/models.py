@@ -1,67 +1,51 @@
 from django.db import models
 from decimal import Decimal
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
-from django.db.models import Sum, F, FloatField, ExpressionWrapper
 
 
+# -----------------------------
+# Main Quotation Model
+# -----------------------------
 class Quotation(models.Model):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
         ('pending', 'Pending'),
         ('approved', 'Approved'),
-        ('closed', 'Closed'),
+        ('rejected', 'Rejected'),
     ]
 
+    id = models.AutoField(primary_key=True)
+    lead_id = models.IntegerField(null=True, blank=True)
+    version = models.IntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
-    subtotal_discount = models.FloatField(default=0)
+
+    subtotal_discount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    vat = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('13.00'),
+        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('100.00'))]
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # Optional text fields
+    # Text fields
     terms_and_conditions = models.TextField(blank=True, null=True)
     additional_notes = models.TextField(blank=True, null=True)
 
     def __str__(self):
         return f"Quotation #{self.id} ({self.status})"
 
-    # -------------------------------
-    #  Totals and Calculations
-    # -------------------------------
-    def total_before_discount(self):
-        return self.items.aggregate(
-            total=Sum(F('qty') * F('rate'), output_field=FloatField())
-        )['total'] or 0
 
-    def total_discount(self):
-        return self.items.aggregate(
-            total=Sum(
-                ExpressionWrapper(F('qty') * F('rate') * F('discount') / 100, output_field=FloatField())
-            )
-        )['total'] or 0
-
-    def total_vat(self):
-        return self.items.aggregate(
-            total=Sum(
-                ExpressionWrapper(
-                    F('qty') * (F('rate') - (F('rate') * F('discount') / 100)) * F('vat') / 100,
-                    output_field=FloatField()
-                )
-            )
-        )['total'] or 0
-
-    def grand_total(self):
-        subtotal = self.total_before_discount()
-        discount = self.total_discount()
-        subtotal_after_discount = subtotal - discount - self.subtotal_discount
-        vat = self.total_vat()
-        return round(subtotal_after_discount + vat, 2)
-
-    def save(self, *args, **kwargs):
-        if self.status == 'closed' and self.pk:
-            raise ValueError("Closed quotations cannot be modified.")
-        super().save(*args, **kwargs)
-
-
+# -----------------------------
+# Quotation Item Model
+# -----------------------------
 class QuotationItem(models.Model):
     quotation = models.ForeignKey('Quotation', related_name='items', on_delete=models.CASCADE)
 
@@ -76,26 +60,50 @@ class QuotationItem(models.Model):
         ]
     )
 
-    qty = models.FloatField(default=0, validators=[MinValueValidator(0)])
-    rate = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(Decimal('0.00'))])
-    discount = models.FloatField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    vat = models.FloatField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
-    version = models.IntegerField(default=1)
+    qty = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    rate = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
 
+    # Discount logic
+    DISCOUNT_TYPE_CHOICES = [
+        ('percent', 'Percent'),
+        ('amount', 'Amount'),
+    ]
+    discount_type = models.CharField(
+        max_length=10,
+        choices=DISCOUNT_TYPE_CHOICES,
+        default='percent'
+    )
+    discount_value = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+
+    # Unit: predefined or custom
     UNIT_CHOICES = [
         ('pcs', 'Piece'),
         ('m', 'Meter'),
     ]
-    unit = models.CharField(max_length=10, choices=UNIT_CHOICES, blank=True)
+    unit = models.CharField(max_length=50, choices=UNIT_CHOICES, blank=True)
+    custom_unit = models.CharField(max_length=50, blank=True, null=True)
 
-    @property
-    def total_price(self):
-        subtotal = Decimal(self.qty) * self.rate
-        discount_amount = subtotal * Decimal(self.discount) / 100
-        subtotal_after_discount = subtotal - discount_amount
-        vat_amount = subtotal_after_discount * Decimal(self.vat) / 100
-        return round(subtotal_after_discount + vat_amount, 2)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
+    # -----------------------------
+    # Save and String Representation
+    # -----------------------------
     def save(self, *args, **kwargs):
         if self.name:
             self.name = self.name.strip().title()
@@ -104,7 +112,27 @@ class QuotationItem(models.Model):
     def __str__(self):
         return f"{self.name} (Quotation #{self.quotation.id})"
 
+    # -----------------------------
+    # Helper Properties
+    # -----------------------------
+    @property
+    def effective_unit(self):
+        """Return the actual unit, custom if provided."""
+        return self.custom_unit if self.custom_unit else self.unit
 
+    @property
+    def total_price(self):
+        """Calculate total after discount safely using Decimal."""
+        base = self.rate * self.qty
+        if self.discount_type == 'percent':
+            return base * (Decimal('1.00') - self.discount_value / Decimal('100.00'))
+        else:  # amount
+            return max(base - self.discount_value, Decimal('0.00'))
+
+
+# -----------------------------
+# Quotation Info Model
+# -----------------------------
 class QuotationInfo(models.Model):
     quotation = models.OneToOneField(
         Quotation,
@@ -120,8 +148,8 @@ class QuotationInfo(models.Model):
         null=True,
         validators=[
             RegexValidator(
-                regex=r'^(\+977[- ]?\d{7,10}|0\d{1,2}[- ]?\d{6,8})$',
-                message="Phone number must be in one of these formats: '+9779814714838', '+977-9819191818', '+977 9819191818', '01-40000000', or '01xxxxxxx'."
+                regex=r'^\+(0?[1-9][0-9]{0,2})[- ]?\d{7,10}$',
+                message="Phone number must be in one of these formats: '+9779814716361', '+977-9819191818', '+977 9819191818', '01-40000000', or '01xxxxxxx'."
             )
         ]
     )

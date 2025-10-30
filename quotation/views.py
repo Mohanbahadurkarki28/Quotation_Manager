@@ -13,34 +13,43 @@ class QuotationViewSet(viewsets.ModelViewSet):
     queryset = Quotation.objects.prefetch_related('items').all().order_by('-created_at')
     serializer_class = QuotationSerializer
 
-    # --- Existing actions ---
+    # ----------------------------------------
+    # Approve Quotation
+    # ----------------------------------------
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         quotation = self.get_object()
         if quotation.status in ['approved', 'closed']:
-            return Response({'error': 'Cannot approve a quotation in this status.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Cannot approve a quotation in this status.'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         quotation.status = 'approved'
         quotation.save()
         serializer = QuotationSerializer(quotation)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    # ----------------------------------------
+    # Close Quotation
+    # ----------------------------------------
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
         quotation = self.get_object()
         if quotation.status == 'draft':
-            return Response({'error': 'Cannot close a draft quotation.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'Cannot close a draft quotation.'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         quotation.status = 'closed'
         quotation.save()
         serializer = QuotationSerializer(quotation)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    # ---  New secure method to add an item ---
+    # ----------------------------------------
+    # Add Item to Quotation
+    # ----------------------------------------
     @action(detail=True, methods=['post'])
     def add_item(self, request, pk=None):
         """
-        Blocks names with special characters to prevent SQL injection and XSS.
+        Add an item to a quotation. Validates name and handles manual/custom units.
         """
         quotation = self.get_object()
         data = request.data
@@ -49,8 +58,8 @@ class QuotationViewSet(viewsets.ModelViewSet):
         qty = data.get('qty', 0)
         rate = data.get('rate', 0)
         discount = data.get('discount', 0)
-        vat = data.get('vat', 0)
-        unit = data.get('unit', 'pcs')
+        unit = data.get('unit', '')        # choice from predefined units
+        custom_unit = data.get('custom_unit', '')  # manual unit entry
 
         # --- Validate name ---
         if not VALID_NAME_REGEX.match(name):
@@ -66,8 +75,8 @@ class QuotationViewSet(viewsets.ModelViewSet):
                 qty=qty,
                 rate=rate,
                 discount=discount,
-                vat=vat,
-                unit=unit
+                unit=unit,
+                custom_unit=custom_unit
             )
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -76,3 +85,52 @@ class QuotationViewSet(viewsets.ModelViewSet):
             {"message": "Item added successfully", "item_id": item.id},
             status=status.HTTP_201_CREATED
         )
+
+    # ----------------------------------------
+    # Remove Item from Quotation
+    # ----------------------------------------
+    @action(detail=True, methods=['delete'], url_path='remove-item/(?P<item_id>[^/.]+)')
+    def remove_item(self, request, pk=None, item_id=None):
+        quotation = self.get_object()
+        try:
+            item = quotation.items.get(id=item_id)
+            item.delete()
+            return Response({"message": "Item removed successfully."}, status=status.HTTP_200_OK)
+        except QuotationItem.DoesNotExist:
+            return Response({"error": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    # ----------------------------------------
+    # Update Item
+    # ----------------------------------------
+    @action(detail=True, methods=['patch'], url_path='update-item/(?P<item_id>[^/.]+)')
+    def update_item(self, request, pk=None, item_id=None):
+        quotation = self.get_object()
+        data = request.data
+
+        try:
+            item = quotation.items.get(id=item_id)
+        except QuotationItem.DoesNotExist:
+            return Response({"error": "Item not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        name = data.get('name', item.name).strip()
+        qty = data.get('qty', item.qty)
+        rate = data.get('rate', item.rate)
+        discount = data.get('discount', item.discount)
+        unit = data.get('unit', item.unit)
+        custom_unit = data.get('custom_unit', item.custom_unit)
+
+        if not VALID_NAME_REGEX.match(name):
+            return Response(
+                {"error": "Invalid name. Only letters, numbers, spaces, hyphens, commas, periods, and parentheses are allowed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        item.name = name
+        item.qty = qty
+        item.rate = rate
+        item.discount = discount
+        item.unit = unit
+        item.custom_unit = custom_unit
+        item.save()
+
+        return Response({"message": "Item updated successfully."}, status=status.HTTP_200_OK)
