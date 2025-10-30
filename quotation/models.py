@@ -2,7 +2,6 @@ from django.db import models
 from decimal import Decimal
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 
-
 # -----------------------------
 # Main Quotation Model
 # -----------------------------
@@ -16,6 +15,11 @@ class Quotation(models.Model):
 
     id = models.AutoField(primary_key=True)
     lead_id = models.IntegerField(null=True, blank=True)
+    validation_date = models.DateField(
+        null=True, 
+        blank=True,
+        help_text="Optional date until which the quotation is valid.",
+    )
     version = models.IntegerField(default=1)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
 

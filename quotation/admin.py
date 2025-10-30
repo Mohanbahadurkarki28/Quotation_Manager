@@ -46,6 +46,7 @@ class QuotationAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'lead_id',
+        'validation_date',
         'status',
         'version',
         'subtotal_display',
@@ -71,6 +72,7 @@ class QuotationAdmin(admin.ModelAdmin):
         (None, {
             'fields': (
                 'lead_id',
+                'validation_date',
                 'status',
                 'version',
                 'subtotal_discount',

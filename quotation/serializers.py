@@ -60,6 +60,7 @@ class QuotationSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'lead_id',
+            'validation_date',
             'version',
             'status',
             'subtotal_discount',
