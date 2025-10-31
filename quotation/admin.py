@@ -45,8 +45,9 @@ class QuotationInfoInline(admin.StackedInline):
 class QuotationAdmin(admin.ModelAdmin):
     list_display = (
         'id',
+        'quotation_number', 
         'lead_id',
-        'validation_date',
+        'validity_date',
         'status',
         'version',
         'subtotal_display',
@@ -71,8 +72,9 @@ class QuotationAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {
             'fields': (
+                'quotation_number', 
                 'lead_id',
-                'validation_date',
+                'validity_date',
                 'status',
                 'version',
                 'subtotal_discount',

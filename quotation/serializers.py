@@ -59,8 +59,9 @@ class QuotationSerializer(serializers.ModelSerializer):
         model = Quotation
         fields = [
             'id',
+            'quotation_number', 
             'lead_id',
-            'validation_date',
+            'validity_date',
             'version',
             'status',
             'subtotal_discount',

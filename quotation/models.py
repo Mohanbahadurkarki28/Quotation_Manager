@@ -1,6 +1,8 @@
 from django.db import models
 from decimal import Decimal
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
+from datetime import date
+from django.db.models import Max
 
 # -----------------------------
 # Main Quotation Model
@@ -12,16 +14,19 @@ class Quotation(models.Model):
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
     ]
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
+    
 
     id = models.AutoField(primary_key=True)
+    quotation_number = models.CharField(max_length=20, unique=True, blank=True, null=True)
+
     lead_id = models.IntegerField(null=True, blank=True)
-    validation_date = models.DateField(
-        null=True, 
+    validity_date = models.DateField(
+        null=True,
         blank=True,
         help_text="Optional date until which the quotation is valid.",
     )
     version = models.IntegerField(default=1)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
 
     subtotal_discount = models.DecimalField(
         max_digits=12,
@@ -43,8 +48,49 @@ class Quotation(models.Model):
     terms_and_conditions = models.TextField(blank=True, null=True)
     additional_notes = models.TextField(blank=True, null=True)
 
+    # -----------------------------
+    # Helper: Get Fiscal Year
+    # -----------------------------
+    @staticmethod
+    def get_current_fiscal_year():
+        today = date.today()
+        year = today.year
+        month = today.month
+        # Nepal Fiscal Year: starts mid-July (month 7)
+        if month < 7:
+            return f"{str(year - 1)[-2:]}/{str(year)[-2:]}"
+        else:
+            return f"{str(year)[-2:]}/{str(year + 1)[-2:]}"
+
+    # -----------------------------
+    # Generate Quotation Number
+    # -----------------------------
+    def generate_quotation_number(self):
+        fiscal_year = self.get_current_fiscal_year()
+        last_q = Quotation.objects.filter(
+            quotation_number__contains=fiscal_year
+        ).aggregate(Max('quotation_number'))
+
+        last_num = 0
+        if last_q['quotation_number__max']:
+            try:
+                last_num = int(last_q['quotation_number__max'].split(' ')[-1])
+            except ValueError:
+                pass
+
+        new_num = last_num + 1
+        return f"Q {fiscal_year} {new_num}"
+
+    # -----------------------------
+    # Auto-generate before save
+    # -----------------------------
+    def save(self, *args, **kwargs):
+        if not self.quotation_number:
+            self.quotation_number = self.generate_quotation_number()
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f"Quotation #{self.id} ({self.status})"
+        return f"{self.quotation_number or 'Quotation'} ({self.status})"
 
 
 # -----------------------------
