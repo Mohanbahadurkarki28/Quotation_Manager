@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 from datetime import date, timedelta
 from nepali_datetime import date as nep_date 
+from django.db import transaction
 
 
 class Quotation(models.Model):
@@ -62,24 +63,25 @@ class Quotation(models.Model):
         fiscal_year = self.get_current_fiscal_year()
         prefix = f"Q-{fiscal_year}"
 
-        last_q = Quotation.objects.filter(
-            quotation_number__startswith=prefix
-        ).order_by('-id').first()
+        with transaction.atomic():
+            last_q = Quotation.objects.select_for_update().filter(
+                quotation_number__startswith=prefix
+            ).order_by('-id').first()
 
-        last_num = 0
-        if last_q and last_q.quotation_number:
-            try:
-                last_num = int(last_q.quotation_number.split('-')[-1])
-            except (IndexError, ValueError):
-                last_num = 0
+            last_num = 0
+            if last_q and last_q.quotation_number:
+                try:
+                    last_num = int(last_q.quotation_number.split('-')[-1])
+                except (IndexError, ValueError):
+                    last_num = 0
 
-        new_num = last_num + 1
+            new_num = last_num + 1
 
-        # Ensure uniqueness
-        while Quotation.objects.filter(quotation_number=f"{prefix}-{new_num}").exists():
-            new_num += 1
+            # Ensure uniqueness
+            while Quotation.objects.filter(quotation_number=f"{prefix}-{new_num}").exists():
+                new_num += 1
 
-        return f"{prefix}-{new_num}"
+            return f"{prefix}-{new_num}"
 
     # -----------------------------
     # Auto-generate quotation_number and validity_date
