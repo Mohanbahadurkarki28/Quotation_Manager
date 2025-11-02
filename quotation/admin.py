@@ -61,6 +61,7 @@ class QuotationAdmin(admin.ModelAdmin):
     inlines = [QuotationInfoInline, QuotationItemInline]
 
     readonly_fields = (
+        'quotation_number',
         'created_at',
         'updated_at',
         'subtotal_display',
