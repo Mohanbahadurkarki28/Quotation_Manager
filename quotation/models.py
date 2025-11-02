@@ -112,7 +112,7 @@ class QuotationItem(models.Model):
     name = models.CharField(
         max_length=255,
         validators=[RegexValidator(
-            regex=r'^[A-Za-z0-9\s\-,.()]+$',
+            regex=r"^[A-Za-z0-9\s\-\.,'()]+$",
             message="Name can only contain letters, numbers, spaces, hyphens, commas, periods, and parentheses.",
         )]
     )
