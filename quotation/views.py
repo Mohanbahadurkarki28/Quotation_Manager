@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from .models import Quotation
 from .serializers import QuotationSerializer
 
-# Allowed characters: letters, numbers, spaces, hyphens, commas, periods, and parentheses
+
 VALID_NAME_REGEX = re.compile(r'^[A-Za-z0-9\s\-,.()]+$')
 
 

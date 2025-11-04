@@ -14,7 +14,7 @@ class QuotationSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'quotation_number', 'lead_id', 'validity_date', 'version', 'status',
             'subtotal_discount', 'vat', 'terms_and_conditions', 'additional_notes',
-            'quotation_to', 'address', 'phone',  # <-- added directly
+            'quotation_to', 'address', 'phone',  
             'created_at', 'updated_at', 'items',
             'subtotal', 'total_discount', 'total_vat', 'grand_total',
         ]
