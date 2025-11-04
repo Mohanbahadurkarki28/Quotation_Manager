@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'quotation',
     'rest_framework',
     'corsheaders',
+    'django_json_widget',
 ]
 
 MIDDLEWARE = [

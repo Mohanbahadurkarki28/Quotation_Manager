@@ -1,41 +1,9 @@
 from decimal import Decimal
 from rest_framework import serializers
-from .models import Quotation, QuotationItem, QuotationInfo
-
-# -----------------------------
-# Quotation Item Serializer
-# -----------------------------
-class QuotationItemSerializer(serializers.ModelSerializer):
-    total_price = serializers.SerializerMethodField()
-
-    class Meta:
-        model = QuotationItem
-        fields = [
-            'id', 'name', 'qty', 'rate', 'discount_type', 'discount_value',
-            'unit', 'custom_unit', 'total_price',
-        ]
-        read_only_fields = ['id', 'total_price']
-
-    def get_total_price(self, obj):
-        return obj.total_price
+from .models import Quotation
 
 
-# -----------------------------
-# Quotation Info Serializer
-# -----------------------------
-class QuotationInfoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = QuotationInfo
-        fields = ['quotation_to', 'address', 'phone']
-
-
-# -----------------------------
-# Quotation Serializer (Main)
-# -----------------------------
 class QuotationSerializer(serializers.ModelSerializer):
-    items = QuotationItemSerializer(many=True, required=False)
-    info = QuotationInfoSerializer(required=False)
-
     subtotal = serializers.SerializerMethodField()
     total_discount = serializers.SerializerMethodField()
     total_vat = serializers.SerializerMethodField()
@@ -46,94 +14,74 @@ class QuotationSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'quotation_number', 'lead_id', 'validity_date', 'version', 'status',
             'subtotal_discount', 'vat', 'terms_and_conditions', 'additional_notes',
-            'created_at', 'updated_at', 'items', 'info',
+            'quotation_to', 'address', 'phone',  # <-- added directly
+            'created_at', 'updated_at', 'items',
             'subtotal', 'total_discount', 'total_vat', 'grand_total',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'quotation_number']
 
     # -----------------------------
-    # Nested Create
+    # CREATE
     # -----------------------------
     def create(self, validated_data):
-        items_data = validated_data.pop('items', [])
-        info_data = validated_data.pop('info', None)
-
-        # Remove quotation_number if passed
+        # Remove quotation_number if passed manually
         validated_data.pop('quotation_number', None)
 
-        # Create instance and force-generate quotation_number
         quotation = Quotation(**validated_data)
         quotation.quotation_number = quotation.generate_quotation_number()
         quotation.save()
-
-        # Create related items
-        for item_data in items_data:
-            QuotationItem.objects.create(quotation=quotation, **item_data)
-
-        # Create related info
-        if info_data:
-            QuotationInfo.objects.create(quotation=quotation, **info_data)
-
         return quotation
 
     # -----------------------------
-    # Nested Update
+    # UPDATE
     # -----------------------------
     def update(self, instance, validated_data):
-        items_data = validated_data.pop('items', None)
-        info_data = validated_data.pop('info', None)
-
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-
-        # Update items
-        if items_data is not None:
-            existing_items = {item.id: item for item in instance.items.all()}
-            for item_data in items_data:
-                item_id = item_data.get('id')
-                if item_id and item_id in existing_items:
-                    item = existing_items[item_id]
-                    for attr, value in item_data.items():
-                        setattr(item, attr, value)
-                    item.save()
-                else:
-                    QuotationItem.objects.create(quotation=instance, **item_data)
-
-        # Update info
-        if info_data is not None:
-            if hasattr(instance, 'info') and instance.info:
-                for attr, value in info_data.items():
-                    setattr(instance.info, attr, value)
-                instance.info.save()
-            else:
-                QuotationInfo.objects.create(quotation=instance, **info_data)
-
         return instance
 
     # -----------------------------
-    # Computed Fields
+    # COMPUTED FIELDS
     # -----------------------------
     def get_subtotal(self, obj):
-        return sum((item.rate * item.qty for item in obj.items.all()), Decimal('0.00'))
+        """Sum of all (rate * qty) from items JSON."""
+        if not obj.items:
+            return Decimal('0.00')
+        return sum(
+            (Decimal(str(item.get('rate', 0))) * Decimal(str(item.get('qty', 0))))
+            for item in obj.items
+        )
 
     def get_total_discount(self, obj):
+        """Sum of all item-level and subtotal discounts."""
         total_discount = Decimal('0.00')
-        for item in obj.items.all():
-            base = item.rate * item.qty
-            if item.discount_type == 'percent':
-                discount = base * item.discount_value / Decimal('100.00')
-            else:
-                discount = item.discount_value
-            total_discount += min(discount, base)
+        if obj.items:
+            for item in obj.items:
+                rate = Decimal(str(item.get('rate', 0)))
+                qty = Decimal(str(item.get('qty', 0)))
+                base = rate * qty
+                discount_type = item.get('discount_type', 'percent')
+                discount_value = Decimal(str(item.get('discount_value', 0)))
+
+                if discount_type == 'percent':
+                    discount = base * discount_value / Decimal('100.00')
+                else:
+                    discount = discount_value
+
+                total_discount += min(discount, base)
+
         if obj.subtotal_discount:
             total_discount += Decimal(obj.subtotal_discount)
         return total_discount
 
     def get_total_vat(self, obj):
+        """VAT applied after discounts."""
         subtotal_after_discount = self.get_subtotal(obj) - self.get_total_discount(obj)
-        return subtotal_after_discount * obj.vat / Decimal('100.00')
+        vat_percent = Decimal(str(obj.vat)) if obj.vat else Decimal('0.00')
+        return subtotal_after_discount * vat_percent / Decimal('100.00')
 
     def get_grand_total(self, obj):
+        """Final grand total."""
         subtotal_after_discount = self.get_subtotal(obj) - self.get_total_discount(obj)
         return subtotal_after_discount + self.get_total_vat(obj)

@@ -1,14 +1,14 @@
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
+from django.core.validators import (
+    MinValueValidator, MaxValueValidator, RegexValidator
+)
 from decimal import Decimal
 from datetime import date, timedelta
 from nepali_datetime import date as nep_date
+import re
 
 
-# ==============================
-# Quotation Model
-# ==============================
 class Quotation(models.Model):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
@@ -17,6 +17,9 @@ class Quotation(models.Model):
         ('rejected', 'Rejected'),
     ]
 
+    # -----------------------------
+    # Basic Quotation Fields
+    # -----------------------------
     id = models.AutoField(primary_key=True)
     quotation_number = models.CharField(max_length=20, unique=True, blank=True, null=True)
     lead_id = models.IntegerField(null=True, blank=True)
@@ -36,11 +39,31 @@ class Quotation(models.Model):
     terms_and_conditions = models.TextField(blank=True, null=True)
     additional_notes = models.TextField(blank=True, null=True)
 
+    # -----------------------------
+    # Quotation Info Fields
+    # -----------------------------
+    quotation_to = models.CharField(max_length=255, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    phone = models.CharField(
+        max_length=25, blank=True, null=True,
+        validators=[RegexValidator(
+            regex=r'^\+(0?[1-9][0-9]{0,2})[- ]?\d{7,10}$',
+            message="Phone number must be valid."
+        )]
+    )
+
+    # -----------------------------
+    # Quotation Items (as JSON)
+    # -----------------------------
+    items = models.JSONField(default=list)  
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    VALID_NAME_REGEX = re.compile(r"^[A-Za-z0-9\s\-\.,'()]+$")
+
     # -----------------------------
-    # Nepali Fiscal Year Helper
+    # Fiscal Year Helper
     # -----------------------------
     @staticmethod
     def get_current_fiscal_year():
@@ -85,26 +108,82 @@ class Quotation(models.Model):
             return f"{prefix}-{new_num}"
 
     # -----------------------------
-    # Validation
+    # Validation for items + discounts
     # -----------------------------
+    def clean_items(self):
+        """Validate each item in JSON list."""
+        for i, data in enumerate(self.items):
+            required_keys = ["name", "qty", "rate", "discount_type", "discount_value", "unit", "custom_unit"]
+            for key in required_keys:
+                if key not in data:
+                    raise ValidationError(f"Item {i+1}: Missing key '{key}'")
+
+            name = data.get("name", "").strip()
+            if not self.VALID_NAME_REGEX.match(name):
+                raise ValidationError(f"Item {i+1}: Invalid name format.")
+
+            try:
+                qty = Decimal(str(data.get("qty", "0.00")))
+                rate = Decimal(str(data.get("rate", "0.00")))
+            except Exception:
+                raise ValidationError(f"Item {i+1}: Quantity and rate must be valid decimal numbers.")
+
+            if qty < 0 or rate < 0:
+                raise ValidationError(f"Item {i+1}: Quantity and rate cannot be negative.")
+
+            discount_type = data.get("discount_type")
+            discount_value = Decimal(str(data.get("discount_value", "0.00")))
+
+            if discount_type not in ["percent", "amount"]:
+                raise ValidationError(f"Item {i+1}: Invalid discount type. Must be 'percent' or 'amount'.")
+            if discount_value < 0:
+                raise ValidationError(f"Item {i+1}: Discount value cannot be negative.")
+
+            if self.subtotal_discount > 0 and discount_value > 0:
+                raise ValidationError("Cannot apply both subtotal discount and item discount value.")
+
     def clean(self):
         super().clean()
-        # Check if both subtotal and item-level discounts exist
-        if self.pk:  # only check if Quotation already saved (so items exist)
-            has_item_discounts = any(item.discount_value > 0 for item in self.items.all())
-            if self.subtotal_discount > 0 and has_item_discounts:
-                raise ValidationError("You cannot give discounts in both subtotal and item level. Please choose only one.")
+        self.clean_items()
 
     # -----------------------------
-    # Auto-generate quotation_number and validity_date
+    # Auto save handlers
     # -----------------------------
     def save(self, *args, **kwargs):
-        self.full_clean()  # validate before saving
+        self.full_clean()
         if not self.quotation_number:
             self.quotation_number = self.generate_quotation_number()
         if not self.validity_date:
             self.validity_date = date.today() + timedelta(days=14)
+
+        # Normalize item names
+        for item in self.items:
+            if "name" in item:
+                item["name"] = item["name"].strip().title()
+
         super().save(*args, **kwargs)
+
+    # -----------------------------
+    # Utility Calculations
+    # -----------------------------
+    def item_total(self, item):
+        qty = Decimal(str(item.get("qty", "0.00")))
+        rate = Decimal(str(item.get("rate", "0.00")))
+        discount_type = item.get("discount_type", "percent")
+        discount_value = Decimal(str(item.get("discount_value", "0.00")))
+
+        base = qty * rate
+        if discount_type == "percent":
+            return base * (Decimal("1.00") - discount_value / Decimal("100.00"))
+        else:
+            return max(base - discount_value, Decimal("0.00"))
+
+    def grand_total(self):
+        total = sum(self.item_total(item) for item in self.items)
+        if self.subtotal_discount > 0:
+            total -= total * (self.subtotal_discount / Decimal("100.00"))
+        vat_amount = total * (self.vat / Decimal("100.00"))
+        return total + vat_amount
 
     def __str__(self):
         return f"{self.quotation_number or 'Quotation'} - Lead #{self.lead_id or 'N/A'} ({self.status})"
@@ -114,100 +193,3 @@ class Quotation(models.Model):
             models.Index(fields=['quotation_number']),
             models.Index(fields=['lead_id']),
         ]
-
-
-# ==============================
-# Quotation Item Model
-# ==============================
-class QuotationItem(models.Model):
-    quotation = models.ForeignKey('Quotation', related_name='items', on_delete=models.CASCADE)
-
-    name = models.CharField(
-        max_length=255,
-        validators=[RegexValidator(
-            regex=r"^[A-Za-z0-9\s\-\.,'()]+$",
-            message="Name can only contain letters, numbers, spaces, hyphens, commas, periods, and parentheses.",
-        )]
-    )
-
-    qty = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0.00'),
-        validators=[MinValueValidator(Decimal('0.00'))]
-    )
-    rate = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0.00'),
-        validators=[MinValueValidator(Decimal('0.00'))]
-    )
-
-    DISCOUNT_TYPE_CHOICES = [
-        ('percent', 'Percent'),
-        ('amount', 'Amount'),
-    ]
-    discount_type = models.CharField(
-        max_length=10, choices=DISCOUNT_TYPE_CHOICES, default='percent'
-    )
-    discount_value = models.DecimalField(
-        max_digits=12, decimal_places=2, default=Decimal('0.00'),
-        validators=[MinValueValidator(Decimal('0.00'))]
-    )
-
-    UNIT_CHOICES = [
-        ('pcs', 'Piece'),
-        ('m', 'Meter'),
-    ]
-    unit = models.CharField(max_length=50, choices=UNIT_CHOICES, blank=True)
-    custom_unit = models.CharField(max_length=50, blank=True, null=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    # -----------------------------
-    # Validation
-    # -----------------------------
-    def clean(self):
-        super().clean()
-        if self.quotation and self.quotation.subtotal_discount > 0 and self.discount_value > 0:
-            raise ValidationError("You cannot give discounts in both subtotal and item discount value. Please choose only one.")
-
-    def save(self, *args, **kwargs):
-        self.full_clean()  # ensures validation before saving
-        if self.name:
-            self.name = self.name.strip().title()
-        super().save(*args, **kwargs)
-
-    def __str__(self):
-        return f"{self.name} (Quotation #{self.quotation.id})"
-
-    @property
-    def effective_unit(self):
-        return self.custom_unit if self.custom_unit else self.unit
-
-    @property
-    def total_price(self):
-        base = self.rate * self.qty
-        if self.discount_type == 'percent':
-            return base * (Decimal('1.00') - self.discount_value / Decimal('100.00'))
-        else:
-            return max(base - self.discount_value, Decimal('0.00'))
-
-
-# ==============================
-# Quotation Info Model
-# ==============================
-class QuotationInfo(models.Model):
-    quotation = models.OneToOneField(
-        Quotation, related_name='info', on_delete=models.CASCADE
-    )
-    quotation_to = models.CharField(max_length=255, blank=True, null=True)
-    address = models.TextField(blank=True, null=True)
-
-    phone = models.CharField(
-        max_length=25, blank=True, null=True,
-        validators=[RegexValidator(
-            regex=r'^\+(0?[1-9][0-9]{0,2})[- ]?\d{7,10}$',
-            message="Phone number must be valid."
-        )]
-    )
-
-    def __str__(self):
-        return f"Info for Quotation #{self.quotation.id}"
