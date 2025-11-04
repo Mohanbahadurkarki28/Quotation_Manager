@@ -118,7 +118,7 @@ class QuotationAdmin(admin.ModelAdmin):
                 discount = base * item.discount_value / Decimal('100.00')
             else:
                 discount = item.discount_value
-            total_discount += min(discount, base)  # ensure discount never exceeds base
+            total_discount += min(discount, base) 
         # Include quotation-level discount if any
         if obj.subtotal_discount:
             total_discount += Decimal(obj.subtotal_discount)

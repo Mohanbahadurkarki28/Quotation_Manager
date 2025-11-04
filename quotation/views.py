@@ -58,8 +58,8 @@ class QuotationViewSet(viewsets.ModelViewSet):
         qty = data.get('qty', 0)
         rate = data.get('rate', 0)
         discount = data.get('discount', 0)
-        unit = data.get('unit', '')        # choice from predefined units
-        custom_unit = data.get('custom_unit', '')  # manual unit entry
+        unit = data.get('unit', '')       
+        custom_unit = data.get('custom_unit', '') 
 
         # --- Validate name ---
         if not VALID_NAME_REGEX.match(name):
