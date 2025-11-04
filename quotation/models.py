@@ -1,11 +1,14 @@
-from django.db import models
-from decimal import Decimal
+from django.db import models, transaction
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
+from decimal import Decimal
 from datetime import date, timedelta
-from nepali_datetime import date as nep_date 
-from django.db import transaction
+from nepali_datetime import date as nep_date
 
 
+# ==============================
+# Quotation Model
+# ==============================
 class Quotation(models.Model):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
@@ -76,17 +79,27 @@ class Quotation(models.Model):
                     last_num = 0
 
             new_num = last_num + 1
-
-            # Ensure uniqueness
             while Quotation.objects.filter(quotation_number=f"{prefix}-{new_num}").exists():
                 new_num += 1
 
             return f"{prefix}-{new_num}"
 
     # -----------------------------
+    # Validation
+    # -----------------------------
+    def clean(self):
+        super().clean()
+        # Check if both subtotal and item-level discounts exist
+        if self.pk:  # only check if Quotation already saved (so items exist)
+            has_item_discounts = any(item.discount_value > 0 for item in self.items.all())
+            if self.subtotal_discount > 0 and has_item_discounts:
+                raise ValidationError("You cannot give discounts in both subtotal and item level. Please choose only one.")
+
+    # -----------------------------
     # Auto-generate quotation_number and validity_date
     # -----------------------------
     def save(self, *args, **kwargs):
+        self.full_clean()  # validate before saving
         if not self.quotation_number:
             self.quotation_number = self.generate_quotation_number()
         if not self.validity_date:
@@ -103,9 +116,9 @@ class Quotation(models.Model):
         ]
 
 
-# -----------------------------
+# ==============================
 # Quotation Item Model
-# -----------------------------
+# ==============================
 class QuotationItem(models.Model):
     quotation = models.ForeignKey('Quotation', related_name='items', on_delete=models.CASCADE)
 
@@ -148,7 +161,16 @@ class QuotationItem(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # -----------------------------
+    # Validation
+    # -----------------------------
+    def clean(self):
+        super().clean()
+        if self.quotation and self.quotation.subtotal_discount > 0 and self.discount_value > 0:
+            raise ValidationError("You cannot give discounts in both subtotal and item discount value. Please choose only one.")
+
     def save(self, *args, **kwargs):
+        self.full_clean()  # ensures validation before saving
         if self.name:
             self.name = self.name.strip().title()
         super().save(*args, **kwargs)
@@ -169,9 +191,9 @@ class QuotationItem(models.Model):
             return max(base - self.discount_value, Decimal('0.00'))
 
 
-# -----------------------------
+# ==============================
 # Quotation Info Model
-# -----------------------------
+# ==============================
 class QuotationInfo(models.Model):
     quotation = models.OneToOneField(
         Quotation, related_name='info', on_delete=models.CASCADE
